@@ -1,0 +1,19 @@
+# 运行时持久化状态
+state.db
+*.state
+*.db
+
+# 日志
+*.log
+logs/
+
+# 临时文件
+tmp/
+temp/
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# 编辑器
+.vscode/
