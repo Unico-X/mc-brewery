@@ -1,5 +1,5 @@
-local FLUID_REPOSITORY = {
-
+local REPOSITORY = {
+FLUID = {
     {
         id = 1,
         
@@ -39,4 +39,70 @@ local FLUID_REPOSITORY = {
 
         capacity = 2160000
     }
+},
+
+RESOURCE = {
+
+    address = "create:item_vault_665",
+
+    grape_capacityLimit = 34560,
+
+    grape_type = {
+
+        "kaleidoscope_tavern:grape",
+        "kaleidoscope_tavern:green_grape",
+        "kaleidoscope_tavern:ice_grape",
+        "kaleidoscope_tavern:gold_grape"
+    }
+
+
+},
+
+
+RESOURCE_PACKAGE_RULE = {
+
+    green_grape = {
+        name = "kaleidoscope_tavern:green_grape",
+        _requestCount = 64,
+        count = {
+            _op = ">",
+            value = 128,
+        }
+    },
+
+    gold_grape = {
+        name = "kaleidoscope_tavern:gold_grape",
+        _requestCount = 64,
+        count = {
+            _op = ">",
+            value = 128,
+        }
+    },
+
+    ice_grape = {
+        name = "kaleidoscope_tavern:ice_grape",
+        _requestCount = 64,
+        count = {
+            _op = ">",
+            value = 128,
+        }
+    },
+
+    grape = {
+        name = "kaleidoscope_tavern:grape",
+        _requestCount = 64,
+        count = {
+            _op = ">",
+            value = 128,
+        }
+    },
+},
+
+RESOURCE_REQUIRER = peripheral.wrap("Create_StockTicker_14"),
+
+RESOURCE_ADDRESS = "winery"
+
+
 }
+
+return REPOSITORY

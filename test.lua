@@ -1,30 +1,16 @@
-local RECIPE = require("recipe_config")
-local firstSwitch = peripheral.wrap("Create_SequencedGearshift_9")
-local gather = require("gather")
-local source_box = "minecraft:chest_37"
-local targetMachineBox = "create:deployer_73"
-local openSwitch = peripheral.wrap("Create_SequencedGearshift_10")
-local secondSwitch = peripheral.wrap("Create_SequencedGearshift_11")
-local targetBrewey = peripheral.wrap("blockReader_1")
-<<<<<<< HEAD
-local bottleAmount = 2
-local bottleItemName = "kaleidoscope_tavern:empty_bottle"
- 
-=======
-local bottleAmount = 3
-local bottleItemName = "kaleidoscope_tavern:empty_bottle"
+local MILKING = require("milking")
+local Util = require("Util")
+local REPOSITORY = require("repository_config")
 
->>>>>>> 157d389 (添加遍历所有物品的工具函数)
-gather.gather(RECIPE[1], 
-        source_box, 
-        targetMachineBox,
-        firstSwitch,
-        openSwitch,
-        secondSwitch,
-        targetBrewey,
-        bottleAmount,
-<<<<<<< HEAD
-        bottleItemName)
-=======
-        bottleItemName)
->>>>>>> 157d389 (添加遍历所有物品的工具函数)
+local source = peripheral.wrap(REPOSITORY.RESOURCE.address)
+print(("source: %s, slots: %d"):format(REPOSITORY.RESOURCE.address, source.size()))
+for slot, item in pairs(source.list()) do
+    print(("slot %d: %s x%d"):format(slot, item.name, item.count))
+end
+
+for _, grapeName in ipairs(REPOSITORY.RESOURCE.grape_type) do
+    print(("%s: %d"):format(grapeName, Util.count(grapeName, REPOSITORY.RESOURCE.address)))
+end
+
+local processed = MILKING.milking()
+print(("milking: completed %d batch(es)"):format(processed))

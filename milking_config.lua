@@ -1,5 +1,7 @@
-local MILKING_MACHINE = {
+local MILKING = {
       
+ MACHINE = {
+        
     {
         switch = "redstone_relay_14",
 
@@ -76,10 +78,95 @@ local MILKING_MACHINE = {
                 address = "kaleidoscope_tavern:pressing_tub_21"
             },
         }
+    },
+
+    {
+
+        switch = "redstone_relay_16",
+
+        slot = {
+
+            {
+                status = "idle",
+
+                batch = ...,
+
+                address = "kaleidoscope_tavern:pressing_tub_22"
+            },
+
+            {
+                status = "idle",
+
+                batch = ...,
+
+                address = "kaleidoscope_tavern:pressing_tub_23"
+            },
+
+            {
+                status = "idle",
+
+                batch = ...,
+
+                address = "kaleidoscope_tavern:pressing_tub_24"
+            },
+
+            {
+                status = "idle",
+
+                batch = ...,
+
+                address = "kaleidoscope_tavern:pressing_tub_25"
+            },
+        }
+
+        
+    },
+
+    {
+
+        switch = "redstone_relay_17",
+
+        slot = {
+
+            {
+                status = "idle",
+
+                batch = ...,
+
+                address = "kaleidoscope_tavern:pressing_tub_26"
+            },
+
+            {
+                status = "idle",
+
+                batch = ...,
+
+                address = "kaleidoscope_tavern:pressing_tub_27"
+            },
+
+            {
+                status = "idle",
+
+                batch = ...,
+
+                address = "kaleidoscope_tavern:pressing_tub_28"
+            },
+
+            {
+                status = "idle",
+
+                batch = ...,
+
+                address = "kaleidoscope_tavern:pressing_tub_29"
+            },
+        }
+
+        
     }
+},
+
+RULE = {}
+
 }
 
-local MILKING_RULE = {
-
-
-}
+return MILKING
