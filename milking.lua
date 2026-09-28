@@ -176,17 +176,22 @@ local function prepareBatches()
     return machinePlans, batches
 end
 
-local function pulseMachine(machine)
+local function pulseMachine(machine, pressCount)
     local relay = wrapRelay(machine.switch)
     local side = machine.side or machine.output_side or DEFAULT_RELAY_SIDE
+    pressCount = pressCount or PRESS_COUNT
 
     if type(side) ~= "string" or side == "" then
         error("milking: machine relay side must be a non-empty string", 3)
     end
 
+    if type(pressCount) ~= "number" or pressCount <= 0 or pressCount ~= math.floor(pressCount) then
+        error("milking: press count must be a positive integer", 3)
+    end
+
     local outputOn = false
     local ok, result = pcall(function()
-        for _ = 1, PRESS_COUNT do
+        for _ = 1, pressCount do
             relay.setOutput(side, true)
             outputOn = true
             os.sleep(PULSE_SECONDS)
@@ -242,89 +247,36 @@ local function wrapSlotInventory(address)
     return inventory
 end
 
--- Util.Transit intentionally writes only to empty target slots.  A recovered
--- pressing tub already has its one item slot occupied, so topping it up needs
--- to push into that matching slot explicitly.
-local function topUpRecoveredGrapes(resourceAddress, slotAddress, grapeName, count)
-    if count <= 0 then
-        return
-    end
+local function emptySlotItems(slot, resourceAddress)
+    local inventory = wrapSlotInventory(slot.address)
+    local items = inventory.list()
 
-    local resource = wrapSlotInventory(resourceAddress)
-    if type(resource.pushItems) ~= "function" then
-        error(("milking: resource '%s' cannot push items"):format(resourceAddress), 3)
-    end
-
-    local tub = wrapSlotInventory(slotAddress)
-    local targetSlot
-    for index, item in pairs(tub.list()) do
-        if item and item.name == grapeName and item.count > 0 then
-            targetSlot = index
-            break
+    for index = 1, inventory.size() do
+        local item = items[index]
+        if item and type(item.name) == "string" and type(item.count) == "number" and item.count > 0 then
+            Util.Transit(slot.address, resourceAddress, item.name, item.count)
         end
-    end
-
-    if not targetSlot then
-        error(("milking: recovered tub '%s' has no '%s' slot"):format(slotAddress, grapeName), 3)
-    end
-
-    local remaining = count
-    for sourceSlot = 1, resource.size() do
-        if remaining <= 0 then
-            break
-        end
-
-        local item = resource.list()[sourceSlot]
-        if item and item.name == grapeName and item.count > 0 then
-            local moved = resource.pushItems(slotAddress, sourceSlot, remaining, targetSlot)
-            if type(moved) == "number" and moved > 0 then
-                remaining = remaining - moved
-            end
-        end
-    end
-
-    if remaining > 0 then
-        error(
-            ("milking: only added %d of %d '%s' to recovered tub '%s'"):format(
-                count - remaining,
-                count,
-                grapeName,
-                slotAddress
-            ),
-            3
-        )
     end
 end
 
--- Recover items left in a pressing tub after the computer or its chunk was unloaded.
--- A tub can only press one grape variety at a time: retain one variety (up to one
--- batch), return anything else to the resource vault, then fill the batch to eight.
-local function recoverSlot(slot, resourceAddress, grapeTypes, grapes, fluidTargets)
+-- During startup, finish any grapes already in the tub without adding more.
+-- Non-grape items are returned to storage and existing juice is drained first.
+local function recoverSlot(slot, resourceAddress, grapes, fluidTargets)
     drainSlot(slot, fluidTargets)
 
     local inventory = wrapSlotInventory(slot.address)
     local items = inventory.list()
-    local grapeCounts = {}
+    local grapeName
+    local grapeCount = 0
 
     for index = 1, inventory.size() do
         local item = items[index]
         if item and type(item.name) == "string" and type(item.count) == "number" and item.count > 0 then
             if grapes[item.name] then
-                grapeCounts[item.name] = (grapeCounts[item.name] or 0) + item.count
+                grapeName = item.name
+                grapeCount = grapeCount + item.count
             else
                 Util.Transit(slot.address, resourceAddress, item.name, item.count)
-            end
-        end
-    end
-
-    local grapeName
-    if type(slot.batch) == "string" and grapeCounts[slot.batch] then
-        grapeName = slot.batch
-    else
-        for _, name in ipairs(grapeTypes) do
-            if grapeCounts[name] then
-                grapeName = name
-                break
             end
         end
     end
@@ -333,32 +285,15 @@ local function recoverSlot(slot, resourceAddress, grapeTypes, grapes, fluidTarge
         return nil
     end
 
-    -- Mixed varieties cannot form one valid batch, so retain the selected type only.
-    for _, name in ipairs(grapeTypes) do
-        local count = grapeCounts[name] or 0
-        if name ~= grapeName and count > 0 then
-            Util.Transit(slot.address, resourceAddress, name, count)
-        end
-    end
-
-    local retained = math.min(grapeCounts[grapeName], GRAPES_PER_BATCH)
-    local excess = grapeCounts[grapeName] - retained
-    if excess > 0 then
-        Util.Transit(slot.address, resourceAddress, grapeName, excess)
-    end
-
-    if retained < GRAPES_PER_BATCH then
-        topUpRecoveredGrapes(resourceAddress, slot.address, grapeName, GRAPES_PER_BATCH - retained)
-    end
-
     return {
         slot = slot,
         grape = grapeName,
+        grapeCount = grapeCount,
     }
 end
 
 local function prepareRecoveryBatches(fluidTargets)
-    local resourceAddress, grapeTypes, grapes = getRecoveryGrapes()
+    local resourceAddress, _, grapes = getRecoveryGrapes()
     local machinePlans = {}
     local batches = {}
 
@@ -367,16 +302,22 @@ local function prepareRecoveryBatches(fluidTargets)
             error("milking: each machine requires a slot table", 3)
         end
 
-        local machinePlan = { machine = machine, batches = {} }
+        local machinePlan = {
+            machine = machine,
+            batches = {},
+            pressCount = 0,
+            recoveryResourceAddress = resourceAddress,
+        }
         machinePlans[#machinePlans + 1] = machinePlan
 
         for _, slot in ipairs(machine.slot) do
-            local batch = recoverSlot(slot, resourceAddress, grapeTypes, grapes, fluidTargets)
+            local batch = recoverSlot(slot, resourceAddress, grapes, fluidTargets)
             if batch then
                 batch.machinePlan = machinePlan
                 slot.status = "pressing"
                 machinePlan.batches[#machinePlan.batches + 1] = batch
                 batches[#batches + 1] = batch
+                machinePlan.pressCount = math.max(machinePlan.pressCount, batch.grapeCount)
             else
                 slot.status = "idle"
             end
@@ -391,10 +332,13 @@ local function runMachine(machinePlan, fluidTargets)
         return
     end
 
-    pulseMachine(machinePlan.machine)
+    pulseMachine(machinePlan.machine, machinePlan.pressCount or PRESS_COUNT)
 
     for _, batch in ipairs(machinePlan.batches) do
         drainSlot(batch.slot, fluidTargets)
+        if machinePlan.recoveryResourceAddress then
+            emptySlotItems(batch.slot, machinePlan.recoveryResourceAddress)
+        end
         batch.slot.status = "idle"
     end
 end
