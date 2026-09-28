@@ -92,6 +92,30 @@ local function getAvailableGrapes()
     return resource.address, grapeTypes, available
 end
 
+local function getRecoveryGrapes()
+    local resource = REPOSITORY.RESOURCE
+    if type(resource) ~= "table" or type(resource.address) ~= "string" or resource.address == "" then
+        error("milking: REPOSITORY.RESOURCE.address must be a non-empty string", 3)
+    end
+
+    if type(resource.grape_type) ~= "table" then
+        error("milking: REPOSITORY.RESOURCE.grape_type must be a table", 3)
+    end
+
+    local grapeTypes = {}
+    local grapes = {}
+    for _, grapeName in ipairs(resource.grape_type) do
+        if type(grapeName) ~= "string" or grapeName == "" then
+            error("milking: each grape type must be a non-empty string", 3)
+        end
+
+        grapeTypes[#grapeTypes + 1] = grapeName
+        grapes[grapeName] = true
+    end
+
+    return resource.address, grapeTypes, grapes
+end
+
 local function selectGrape(slot, grapeTypes, available)
     if type(slot.batch) == "string" and available[slot.batch] and
         available[slot.batch] > GRAPES_PER_BATCH then
@@ -205,6 +229,109 @@ local function drainSlot(slot, fluidTargets)
     end
 end
 
+local function wrapSlotInventory(address)
+    if type(address) ~= "string" or address == "" then
+        error("milking: slot address must be a non-empty string", 3)
+    end
+
+    local inventory = peripheral.wrap(address)
+    if not inventory or type(inventory.list) ~= "function" or type(inventory.size) ~= "function" then
+        error(("milking: peripheral '%s' is not an inventory"):format(address), 3)
+    end
+
+    return inventory
+end
+
+-- Recover items left in a pressing tub after the computer or its chunk was unloaded.
+-- A tub can only press one grape variety at a time: retain one variety (up to one
+-- batch), return anything else to the resource vault, then fill the batch to eight.
+local function recoverSlot(slot, resourceAddress, grapeTypes, grapes, fluidTargets)
+    drainSlot(slot, fluidTargets)
+
+    local inventory = wrapSlotInventory(slot.address)
+    local items = inventory.list()
+    local grapeCounts = {}
+
+    for index = 1, inventory.size() do
+        local item = items[index]
+        if item and type(item.name) == "string" and type(item.count) == "number" and item.count > 0 then
+            if grapes[item.name] then
+                grapeCounts[item.name] = (grapeCounts[item.name] or 0) + item.count
+            else
+                Util.Transit(slot.address, resourceAddress, item.name, item.count)
+            end
+        end
+    end
+
+    local grapeName
+    if type(slot.batch) == "string" and grapeCounts[slot.batch] then
+        grapeName = slot.batch
+    else
+        for _, name in ipairs(grapeTypes) do
+            if grapeCounts[name] then
+                grapeName = name
+                break
+            end
+        end
+    end
+
+    if not grapeName then
+        return nil
+    end
+
+    -- Mixed varieties cannot form one valid batch, so retain the selected type only.
+    for _, name in ipairs(grapeTypes) do
+        local count = grapeCounts[name] or 0
+        if name ~= grapeName and count > 0 then
+            Util.Transit(slot.address, resourceAddress, name, count)
+        end
+    end
+
+    local retained = math.min(grapeCounts[grapeName], GRAPES_PER_BATCH)
+    local excess = grapeCounts[grapeName] - retained
+    if excess > 0 then
+        Util.Transit(slot.address, resourceAddress, grapeName, excess)
+    end
+
+    if retained < GRAPES_PER_BATCH then
+        Util.Transit(resourceAddress, slot.address, grapeName, GRAPES_PER_BATCH - retained)
+    end
+
+    return {
+        slot = slot,
+        grape = grapeName,
+    }
+end
+
+local function prepareRecoveryBatches(fluidTargets)
+    local resourceAddress, grapeTypes, grapes = getRecoveryGrapes()
+    local machinePlans = {}
+    local batches = {}
+
+    for _, machine in ipairs(MILKING.MACHINE or {}) do
+        if type(machine.slot) ~= "table" then
+            error("milking: each machine requires a slot table", 3)
+        end
+
+        local machinePlan = { machine = machine, batches = {} }
+        machinePlans[#machinePlans + 1] = machinePlan
+
+        for _, slot in ipairs(machine.slot) do
+            local batch = recoverSlot(slot, resourceAddress, grapeTypes, grapes, fluidTargets)
+            if batch then
+                batch.machinePlan = machinePlan
+                slot.status = "pressing"
+                machinePlan.batches[#machinePlan.batches + 1] = batch
+                batches[#batches + 1] = batch
+            else
+                slot.status = "idle"
+            end
+        end
+    end
+
+    return machinePlans, batches
+end
+
 local function runMachine(machinePlan, fluidTargets)
     if #machinePlan.batches == 0 then
         return
@@ -215,6 +342,22 @@ local function runMachine(machinePlan, fluidTargets)
     for _, batch in ipairs(machinePlan.batches) do
         drainSlot(batch.slot, fluidTargets)
         batch.slot.status = "idle"
+    end
+end
+
+local function runMachinePlans(machinePlans, fluidTargets)
+    local workers = {}
+    for _, machinePlan in ipairs(machinePlans) do
+        if #machinePlan.batches > 0 then
+            local plan = machinePlan
+            workers[#workers + 1] = function()
+                runMachine(plan, fluidTargets)
+            end
+        end
+    end
+
+    if #workers > 0 then
+        parallel.waitForAll(unpackValues(workers))
     end
 end
 
@@ -235,6 +378,14 @@ function Milking.milking()
     local processed = 0
 
     local ok, result = pcall(function()
+        activeMachinePlans, batches = prepareRecoveryBatches(fluidTargets)
+        if #batches > 0 then
+            runMachinePlans(activeMachinePlans, fluidTargets)
+            processed = processed + #batches
+        end
+        batches = nil
+        activeMachinePlans = nil
+
         while true do
             local machinePlans
             machinePlans, batches = prepareBatches()
@@ -243,17 +394,7 @@ function Milking.milking()
                 break
             end
 
-            local workers = {}
-            for _, machinePlan in ipairs(machinePlans) do
-                if #machinePlan.batches > 0 then
-                    local plan = machinePlan
-                    workers[#workers + 1] = function()
-                        runMachine(plan, fluidTargets)
-                    end
-                end
-            end
-
-            parallel.waitForAll(unpackValues(workers))
+            runMachinePlans(machinePlans, fluidTargets)
             processed = processed + #batches
             batches = nil
             activeMachinePlans = nil
