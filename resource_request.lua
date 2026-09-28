@@ -14,6 +14,8 @@ local REPOSITORY = require("repository_config")
 
      local grape_ice = Util.count("kaleidoscope_tavern:ice_grape",REPOSITORY.RESOURCE.address)
 
+     local sand = Util.count("minecraft:sand",REPOSITORY.RESOURCE.glass_address)
+
      while 1 do
         
         if( grape_gold + grape_green + grape + grape_ice < REPOSITORY.RESOURCE.grape_capacityLimit) then
@@ -28,6 +30,15 @@ local REPOSITORY = require("repository_config")
         os.sleep(1)
 
         end
+
+        if(sand < REPOSITORY.RESOURCE.sand_capacityLimit) then  
+
+            REPOSITORY.RESOURCE_REQUIRER.requestFiltered(REPOSITORY.RESOURCE_ADDRESS,REPOSITORY.RESOURCE_PACKAGE_RULE.sand)
+            -- Util.Transit(REPOSITORY.RESOURCE.address,REPOSITORY.GLASS_ADDRESS.glass_address,"minecraft:sand",64)
+              
+        end
+
+        
      end
 end
 

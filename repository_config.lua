@@ -43,9 +43,13 @@ FLUID = {
 
 RESOURCE = {
 
+    glass_address = "create:item_vault_410",
+
     address = "create:item_vault_665",
 
     grape_capacityLimit = 34560,
+
+    sand_capacityLimit = 4096,
 
     grape_type = {
 
@@ -90,6 +94,15 @@ RESOURCE_PACKAGE_RULE = {
 
     grape = {
         name = "kaleidoscope_tavern:grape",
+        _requestCount = 64,
+        count = {
+            _op = ">",
+            value = 128,
+        }
+    },
+
+    sand = {
+        name = "minecraft:sand",
         _requestCount = 64,
         count = {
             _op = ">",
