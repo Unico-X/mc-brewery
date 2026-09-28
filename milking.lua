@@ -242,6 +242,60 @@ local function wrapSlotInventory(address)
     return inventory
 end
 
+-- Util.Transit intentionally writes only to empty target slots.  A recovered
+-- pressing tub already has its one item slot occupied, so topping it up needs
+-- to push into that matching slot explicitly.
+local function topUpRecoveredGrapes(resourceAddress, slotAddress, grapeName, count)
+    if count <= 0 then
+        return
+    end
+
+    local resource = wrapSlotInventory(resourceAddress)
+    if type(resource.pushItems) ~= "function" then
+        error(("milking: resource '%s' cannot push items"):format(resourceAddress), 3)
+    end
+
+    local tub = wrapSlotInventory(slotAddress)
+    local targetSlot
+    for index, item in pairs(tub.list()) do
+        if item and item.name == grapeName and item.count > 0 then
+            targetSlot = index
+            break
+        end
+    end
+
+    if not targetSlot then
+        error(("milking: recovered tub '%s' has no '%s' slot"):format(slotAddress, grapeName), 3)
+    end
+
+    local remaining = count
+    for sourceSlot = 1, resource.size() do
+        if remaining <= 0 then
+            break
+        end
+
+        local item = resource.list()[sourceSlot]
+        if item and item.name == grapeName and item.count > 0 then
+            local moved = resource.pushItems(slotAddress, sourceSlot, remaining, targetSlot)
+            if type(moved) == "number" and moved > 0 then
+                remaining = remaining - moved
+            end
+        end
+    end
+
+    if remaining > 0 then
+        error(
+            ("milking: only added %d of %d '%s' to recovered tub '%s'"):format(
+                count - remaining,
+                count,
+                grapeName,
+                slotAddress
+            ),
+            3
+        )
+    end
+end
+
 -- Recover items left in a pressing tub after the computer or its chunk was unloaded.
 -- A tub can only press one grape variety at a time: retain one variety (up to one
 -- batch), return anything else to the resource vault, then fill the batch to eight.
@@ -294,7 +348,7 @@ local function recoverSlot(slot, resourceAddress, grapeTypes, grapes, fluidTarge
     end
 
     if retained < GRAPES_PER_BATCH then
-        Util.Transit(resourceAddress, slot.address, grapeName, GRAPES_PER_BATCH - retained)
+        topUpRecoveredGrapes(resourceAddress, slot.address, grapeName, GRAPES_PER_BATCH - retained)
     end
 
     return {
