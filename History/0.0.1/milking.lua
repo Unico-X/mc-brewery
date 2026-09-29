@@ -9,7 +9,6 @@ local PRESS_COUNT = 8
 local PULSE_SECONDS = 0.2
 local SWITCH_INTERVAL_SECONDS = 1
 local DEFAULT_RELAY_SIDE = "front"
-local POLL_SECONDS = 1
 local unpackValues = table.unpack or unpack
 
 local function wrapFluidStorage(address, label)
@@ -117,113 +116,14 @@ local function getRecoveryGrapes()
     return resource.address, grapeTypes, grapes
 end
 
-local function getJuiceCapacityThreshold(resource, preferredName, legacyName)
-    local value = resource[preferredName]
-    if value == nil then
-        value = resource[legacyName]
-    end
-
-    if type(value) ~= "number" or value < 0 or value > 1 then
-        error(("milking: RESOURCE.%s must be a number between 0 and 1"):format(preferredName), 3)
-    end
-
-    return value
-end
-
-local function buildJuiceControls()
-    local resource = REPOSITORY.RESOURCE
-    if type(resource) ~= "table" or type(resource.grape_type) ~= "table" then
-        error("milking: REPOSITORY.RESOURCE.grape_type must be a table", 3)
-    end
-
-    local startRatio = getJuiceCapacityThreshold(resource, "juice_capacity_min", "juice_capacityLimit_min")
-    local stopRatio = getJuiceCapacityThreshold(resource, "juice_capacity_max", "juice_capacityLimit_max")
-    if startRatio > stopRatio then
-        error("milking: juice_capacity_min must not exceed juice_capacity_max", 3)
-    end
-
-    local grapes = {}
-    for _, grapeName in ipairs(resource.grape_type) do
-        if type(grapeName) ~= "string" or grapeName == "" then
-            error("milking: each grape type must be a non-empty string", 3)
-        end
-
-        grapes[grapeName] = true
-    end
-
-    local controls = {}
-    for _, fluid in ipairs(REPOSITORY.FLUID or {}) do
-        if type(fluid.fluid) ~= "string" or not fluid.fluid:match("_juice$") then
-            error("milking: each juice repository requires a fluid name ending in '_juice'", 3)
-        end
-
-        if type(fluid.address) ~= "string" or fluid.address == "" then
-            error(("milking: juice '%s' requires an address"):format(fluid.fluid), 3)
-        end
-
-        if type(fluid.capacity) ~= "number" or fluid.capacity <= 0 then
-            error(("milking: juice '%s' requires a positive capacity"):format(fluid.fluid), 3)
-        end
-
-        local grapeName = fluid.fluid:sub(1, -7)
-        if grapes[grapeName] then
-            if controls[grapeName] then
-                error(("milking: duplicate juice repository for grape '%s'"):format(grapeName), 3)
-            end
-
-            controls[grapeName] = {
-                address = fluid.address,
-                fluid = fluid.fluid,
-                startAt = startRatio * fluid.capacity,
-                stopAt = stopRatio * fluid.capacity,
-            }
-        end
-    end
-
-    for grapeName in pairs(grapes) do
-        if not controls[grapeName] then
-            error(("milking: no juice repository configured for grape '%s'"):format(grapeName), 3)
-        end
-    end
-
-    return controls
-end
-
-local function getStoredFluidAmount(control)
-    local storage = wrapFluidStorage(control.address, "juice repository")
-    local amount = 0
-
-    for _, tank in pairs(storage.tanks()) do
-        if tank and tank.name == control.fluid and type(tank.amount) == "number" and tank.amount > 0 then
-            amount = amount + tank.amount
-        end
-    end
-
-    return amount
-end
-
-local function updateJuiceProductionStates(juiceControls, activeGrapes)
-    for grapeName, control in pairs(juiceControls) do
-        local amount = getStoredFluidAmount(control)
-
-        if activeGrapes[grapeName] then
-            if amount > control.stopAt then
-                activeGrapes[grapeName] = false
-            end
-        elseif amount < control.startAt then
-            activeGrapes[grapeName] = true
-        end
-    end
-end
-
-local function selectGrape(slot, grapeTypes, available, activeGrapes)
-    if type(slot.batch) == "string" and activeGrapes[slot.batch] and available[slot.batch] and
+local function selectGrape(slot, grapeTypes, available)
+    if type(slot.batch) == "string" and available[slot.batch] and
         available[slot.batch] > GRAPES_PER_BATCH then
         return slot.batch
     end
 
     for _, grapeName in ipairs(grapeTypes) do
-        if activeGrapes[grapeName] and available[grapeName] > GRAPES_PER_BATCH then
+        if available[grapeName] > GRAPES_PER_BATCH then
             return grapeName
         end
     end
@@ -231,7 +131,7 @@ local function selectGrape(slot, grapeTypes, available, activeGrapes)
     return nil
 end
 
-local function prepareBatches(activeGrapes)
+local function prepareBatches()
     local resourceAddress, grapeTypes, available = getAvailableGrapes()
     local machinePlans = {}
     local batches = {}
@@ -250,7 +150,7 @@ local function prepareBatches(activeGrapes)
                     error("milking: each slot requires an address", 3)
                 end
 
-                local grapeName = selectGrape(slot, grapeTypes, available, activeGrapes)
+                local grapeName = selectGrape(slot, grapeTypes, available)
                 if grapeName then
                     available[grapeName] = available[grapeName] - GRAPES_PER_BATCH
 
@@ -471,8 +371,6 @@ end
 
 function Milking.milking()
     local fluidTargets = buildFluidTargets()
-    local juiceControls = buildJuiceControls()
-    local activeGrapes = {}
     local activeMachinePlans
     local batches
     local processed = 0
@@ -488,18 +386,16 @@ function Milking.milking()
 
         while true do
             local machinePlans
-            updateJuiceProductionStates(juiceControls, activeGrapes)
-            machinePlans, batches = prepareBatches(activeGrapes)
+            machinePlans, batches = prepareBatches()
             activeMachinePlans = machinePlans
-
-            if #batches > 0 then
-                runMachinePlans(machinePlans, fluidTargets)
-                processed = processed + #batches
+            if #batches == 0 then
+                break
             end
 
+            runMachinePlans(machinePlans, fluidTargets)
+            processed = processed + #batches
             batches = nil
             activeMachinePlans = nil
-            os.sleep(POLL_SECONDS)
         end
     end)
 
