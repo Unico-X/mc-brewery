@@ -43,6 +43,8 @@ FLUID = {
 
 RESOURCE = {
 
+    bottle_address = "create:item_vault_409",
+
     glass_address = "create:item_vault_410",
 
     address = "create:item_vault_665",
